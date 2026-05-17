@@ -1,0 +1,1 @@
+0 * * * * cd /path/to/workspace && bash scripts/noaa_weather_discord.sh >> .openclaw/weather_alerts.log 2>&1
