@@ -1,6 +1,10 @@
 # SatNOGS Post-Pass Report
 
-Build a compact post like:
+Compact formatter for SatNOGS observation data.
+
+## Output
+
+Build a post like:
 
 ```text
 SatNOGS post-pass data report for station 984
@@ -36,3 +40,4 @@ python3 scripts/satnogs_post_report.py \
 
 - Keep the output plain Markdown for Discord.
 - Use `--json file.json` if the report starts from API data.
+- Works fine in a local-model workflow; the model only needs to call the script.
