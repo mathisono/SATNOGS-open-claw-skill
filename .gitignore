@@ -1,0 +1,6 @@
+.openclaw/weather_alerts.log
+.openclaw/weather_alerts_state.json
+.openclaw/satnogs_984_state.json
+.openclaw/satnogs_984.log
+scripts/__pycache__/
+memory/2026-05-17.md

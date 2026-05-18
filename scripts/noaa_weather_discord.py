@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import hashlib
 import json
 import os
@@ -106,6 +107,10 @@ def post_discord(token, channel_id, content):
         return resp.status
 
 
+def truthy(value):
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def load_state():
     if STATE_FILE.exists():
         return json.loads(STATE_FILE.read_text())
@@ -117,7 +122,12 @@ def save_state(state):
     STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True))
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Post NOAA weather alerts to Discord.")
+    parser.add_argument("--force-post", action="store_true", help="Post even when the digest has not changed.")
+    args = parser.parse_args(argv)
+
+    force_post = args.force_post or truthy(os.environ.get("NOAA_ALERTS_FORCE_POST"))
     token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
     channel_id = os.environ.get("DISCORD_CHANNEL_ID", DEFAULT_CHANNEL_ID).strip()
     alerts = fetch_alerts()
@@ -137,12 +147,15 @@ def main():
     message = build_message(grouped)
     digest = hashlib.sha256(message.encode()).hexdigest()
     state = load_state()
-    if state.get("digest") == digest:
+    unchanged = state.get("digest") == digest
+    if unchanged and not force_post:
         print("No changes; skipping Discord post.")
         return 0
 
     if not token:
         print(message)
+        if force_post and unchanged:
+            print("Override enabled; Discord post skipped because DISCORD_BOT_TOKEN is not set.")
         save_state({"digest": digest})
         return 0
 
@@ -150,7 +163,10 @@ def main():
         post_discord(token, channel_id, part)
 
     save_state({"digest": digest})
-    print("Posted weather alert summary to Discord.")
+    if force_post and unchanged:
+        print("Forced Discord post of unchanged NOAA weather summary.")
+    else:
+        print("Posted weather alert summary to Discord.")
     return 0
 
 
