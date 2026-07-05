@@ -4,6 +4,8 @@ from satnogs_discord_skill.messages import (
     build_completion_embed,
     build_upcoming_embed,
     duration_text,
+    format_completion_message,
+    format_upcoming_message,
     frequency_mhz,
     status_emoji,
 )
@@ -54,6 +56,21 @@ class MessageTests(unittest.TestCase):
         self.assertIn("✅ good", values)
         self.assertIn("Waterfall", values)
         self.assertIn("1", values)
+
+    def test_upcoming_openclaw_message(self):
+        message = format_upcoming_message(OBS, api_base_url="https://network.satnogs.org", tz_name="UTC")
+        self.assertIn("Upcoming SatNOGS pass", message)
+        self.assertIn("Observation #42", message)
+        self.assertIn("https://network.satnogs.org/observations/42/", message)
+        self.assertLessEqual(len(message), 1900)
+
+    def test_completion_openclaw_message(self):
+        obs = dict(OBS, status="good", waterfall="https://example.test/waterfall.png", demoddata=[{"payload_demod": "x"}])
+        message = format_completion_message(obs, api_base_url="https://network.satnogs.org", tz_name="UTC")
+        self.assertIn("SatNOGS pass complete", message)
+        self.assertIn("Final status", message)
+        self.assertIn("good", message)
+        self.assertIn("https://example.test/waterfall.png", message)
 
 
 if __name__ == "__main__":
