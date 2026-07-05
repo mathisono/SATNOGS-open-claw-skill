@@ -1,55 +1,94 @@
-"""Discord webhook posting utilities."""
+"""OpenClaw Discord posting utilities.
+
+The GOES Satellite GIF skill posts to Discord through OpenClaw's message CLI:
+
+    openclaw message send --channel discord --target channel:<id> --message "..."
+
+This module uses the same mechanism instead of talking directly to a Discord
+webhook.
+"""
 
 from __future__ import annotations
 
 import json
+import shlex
+import subprocess
 import sys
-from typing import Any, Optional
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from typing import Optional
 
 
-class DiscordWebhookError(RuntimeError):
-    """Raised when posting to Discord fails."""
+class OpenClawDiscordError(RuntimeError):
+    """Raised when OpenClaw cannot send a Discord message."""
 
 
-class DiscordWebhook:
-    def __init__(self, webhook_url: Optional[str], *, dry_run: bool = False, timeout: int = 30) -> None:
-        self.webhook_url = webhook_url
+class OpenClawDiscord:
+    def __init__(
+        self,
+        target: Optional[str],
+        *,
+        channel: str = "discord",
+        command: str = "openclaw",
+        dry_run: bool = False,
+        timeout: int = 60,
+    ) -> None:
+        self.target = target
+        self.channel = channel
+        self.command = command
         self.dry_run = dry_run
         self.timeout = timeout
 
-    def send(self, payload: dict[str, Any]) -> None:
+    def _command_args(self, message: str) -> list[str]:
+        if not self.target:
+            raise OpenClawDiscordError("No OpenClaw Discord target configured")
+        return shlex.split(self.command) + [
+            "message",
+            "send",
+            "--channel",
+            self.channel,
+            "--target",
+            self.target,
+            "--message",
+            message,
+        ]
+
+    def send_message(self, message: str) -> None:
+        args = self._command_args(message)
         if self.dry_run:
-            print(json.dumps(payload, indent=2, sort_keys=True, default=str))
+            print(
+                json.dumps(
+                    {
+                        "dry_run": True,
+                        "command": shlex.join(args),
+                        "message": message,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
             return
-        if not self.webhook_url:
-            raise DiscordWebhookError("No Discord webhook URL configured")
-        body = json.dumps(payload).encode("utf-8")
-        request = Request(
-            self.webhook_url,
-            data=body,
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": "SATNOGS-open-claw-skill/0.1",
-            },
-        )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
-                # Discord returns 204 No Content for successful webhook posts.
-                if response.status not in (200, 204):
-                    raise DiscordWebhookError(f"Discord webhook returned HTTP {response.status}")
-        except HTTPError as exc:
-            body_text = ""
-            try:
-                body_text = exc.read().decode("utf-8", errors="replace")[:500]
-            except Exception:
-                body_text = ""
-            raise DiscordWebhookError(f"Discord webhook HTTP {exc.code}: {body_text}") from exc
-        except (URLError, TimeoutError) as exc:
-            raise DiscordWebhookError(f"Discord webhook request failed: {exc}") from exc
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise OpenClawDiscordError(f"OpenClaw command not found: {self.command}") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise OpenClawDiscordError("OpenClaw Discord send timed out") from exc
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            details = stderr or stdout or f"exit code {result.returncode}"
+            raise OpenClawDiscordError(f"OpenClaw Discord send failed: {details}")
 
 
 def print_error(message: str) -> None:
     print(message, file=sys.stderr)
+
+
+# Compatibility names for code that imported the initial webhook implementation.
+DiscordWebhookError = OpenClawDiscordError
