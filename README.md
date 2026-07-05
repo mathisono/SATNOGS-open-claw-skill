@@ -1,11 +1,11 @@
 # SATNOGS OpenClaw Skill
 
-OpenClaw skill and cron-friendly Python utility for monitoring a SatNOGS ground station and posting pass notifications to Discord.
+OpenClaw skill and cron-friendly Python utility for monitoring a SatNOGS ground station and posting pass notifications to Discord using OpenClaw's Discord connector.
 
 Target behavior:
 
 1. Read future SatNOGS observations for a configured ground station ID.
-2. Post each newly discovered pass to a Discord channel such as `satalite-data` / `satellite-data` through a channel webhook.
+2. Post each newly discovered pass to a Discord channel through the same OpenClaw CLI process used by [`goes-satellite-gif`](https://github.com/mathisono/goes-satellite-gif): `openclaw message send --channel discord --target channel:<id> --message ...`.
 3. Remember what was announced.
 4. After each pass ends, check SatNOGS again and post a completion summary with status, signal/waterfall information, demodulated data count, and useful links.
 
@@ -23,11 +23,13 @@ examples/systemd/                Optional systemd timer/service
 ## Requirements
 
 - Python 3.11 or newer.
-- Outbound HTTPS access to `https://network.satnogs.org` and Discord webhooks.
+- OpenClaw CLI available as `openclaw` for the user that runs the job.
+- OpenClaw Discord integration configured and able to post to the target Discord channel.
+- Outbound HTTPS access to `https://network.satnogs.org`.
 - A SatNOGS ground station ID.
-- A Discord webhook URL created in the target Discord channel.
+- A SatNOGS API token, recommended for reliable authenticated API requests.
 
-No Python packages are required for runtime. The implementation uses only the Python standard library.
+No Python packages are required for runtime. The implementation uses only the Python standard library and the local `openclaw` command.
 
 ## Configuration
 
@@ -41,27 +43,48 @@ set -a
 set +a
 ```
 
-Required:
+Required for station 984:
 
 ```bash
-SATNOGS_STATION_ID=1234
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+SATNOGS_STATION_ID=984
+SATNOGS_API_TOKEN=<paste your SatNOGS API token here>
+OPENCLAW_DISCORD_TARGET=channel:1494094633142194176
 ```
+
+You may use `DISCORD_CHANNEL_ID=1494094633142194176` instead of `OPENCLAW_DISCORD_TARGET`; the skill will convert it to `channel:1494094633142194176`.
 
 Optional:
 
 ```bash
 SATNOGS_LOOKAHEAD_HOURS=24
 SATNOGS_COMPLETION_GRACE_MINUTES=5
-SATNOGS_TIMEZONE=UTC
+SATNOGS_TIMEZONE=America/Los_Angeles
 SATNOGS_STATE_FILE=.satnogs_state.json
 SATNOGS_API_BASE_URL=https://network.satnogs.org
-SATNOGS_API_TOKEN=
-DISCORD_USERNAME=SatNOGS Pass Bot
-DISCORD_AVATAR_URL=
+OPENCLAW_DISCORD_CHANNEL=discord
+OPENCLAW_COMMAND=openclaw
+SATNOGS_MAX_OBSERVATIONS=100
 ```
 
-The webhook is channel-specific. To post to `satalite-data`, create the webhook in that Discord channel and use that webhook URL.
+Do not commit `.env`. Treat `SATNOGS_API_TOKEN` like a password.
+
+## Discord posting model
+
+This skill does not use Discord webhooks. It shells out to OpenClaw's Discord connector:
+
+```bash
+openclaw message send \
+  --channel discord \
+  --target channel:1494094633142194176 \
+  --message "SatNOGS pass update..."
+```
+
+Verify OpenClaw Discord before running live posts:
+
+```bash
+openclaw channels status --deep
+openclaw message send --channel discord --target channel:1494094633142194176 --message "SatNOGS monitor test"
+```
 
 ## Dry run
 
@@ -71,7 +94,7 @@ Always test with `--dry-run` before sending to Discord:
 python -m satnogs_discord_skill once --dry-run
 ```
 
-Dry-run mode fetches SatNOGS data and prints the Discord payloads instead of posting them.
+Dry-run mode fetches SatNOGS data and prints the exact `openclaw message send` commands instead of posting them.
 
 ## Run once
 
@@ -89,7 +112,7 @@ python -m satnogs_discord_skill once
 ```bash
 python -m satnogs_discord_skill announce-upcoming
 python -m satnogs_discord_skill check-completed
-python -m satnogs_discord_skill list-upcoming --dry-run
+python -m satnogs_discord_skill list-upcoming
 python -m satnogs_discord_skill show-state
 python -m satnogs_discord_skill post-test
 ```
@@ -98,7 +121,9 @@ All commands accept CLI overrides, for example:
 
 ```bash
 python -m satnogs_discord_skill once \
-  --station-id 1234 \
+  --station-id 984 \
+  --api-token "$SATNOGS_API_TOKEN" \
+  --discord-target channel:1494094633142194176 \
   --lookahead-hours 48 \
   --timezone America/Los_Angeles \
   --state-file /var/lib/satnogs-discord/state.json
@@ -106,7 +131,7 @@ python -m satnogs_discord_skill once \
 
 ## Cron
 
-Edit your crontab with `crontab -e`:
+Edit your crontab with `crontab -e` for the same Linux user that has working OpenClaw Discord access:
 
 ```cron
 */10 * * * * cd /path/to/SATNOGS-open-claw-skill && . ./.env && ./scripts/satnogs-discord-cron.sh >> /var/log/satnogs-discord.log 2>&1
@@ -147,7 +172,7 @@ Run tests:
 python -m unittest discover -s tests
 ```
 
-Run formatting or linting with your preferred tools. The project intentionally avoids runtime dependencies.
+Run formatting or linting with your preferred tools. The project intentionally avoids runtime Python dependencies.
 
 ## Notes on SatNOGS APIs
 
