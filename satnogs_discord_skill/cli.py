@@ -5,11 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 from .config import Config, ConfigError, load_config
-from .discord import DiscordWebhook, DiscordWebhookError, print_error
-from .messages import build_completion_embed, build_upcoming_embed, webhook_payload
+from .discord import OpenClawDiscord, OpenClawDiscordError, print_error
+from .messages import format_completion_message, format_upcoming_message
 from .satnogs import SatnogsApiError, SatnogsClient
 from .state import State
 
@@ -18,17 +17,16 @@ class Monitor:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.client = SatnogsClient(config.api_base_url, token=config.api_token)
-        self.discord = DiscordWebhook(config.discord_webhook_url, dry_run=config.dry_run)
+        self.discord = OpenClawDiscord(
+            config.discord_target,
+            channel=config.discord_channel,
+            command=config.openclaw_command,
+            dry_run=config.dry_run,
+        )
         self.state = State.load(config.state_file)
 
-    def _send_embed(self, embed: dict[str, Any], *, content: str | None = None) -> None:
-        payload = webhook_payload(
-            embed=embed,
-            username=self.config.discord_username,
-            avatar_url=self.config.discord_avatar_url,
-            content=content,
-        )
-        self.discord.send(payload)
+    def _send_message(self, message: str) -> None:
+        self.discord.send_message(message)
 
     def announce_upcoming(self) -> int:
         now = datetime.now(timezone.utc)
@@ -44,8 +42,8 @@ class Monitor:
             obs_id = obs.get("id")
             if obs_id is None or self.state.has_announced(obs_id):
                 continue
-            embed = build_upcoming_embed(obs, api_base_url=self.config.api_base_url, tz_name=self.config.timezone)
-            self._send_embed(embed)
+            message = format_upcoming_message(obs, api_base_url=self.config.api_base_url, tz_name=self.config.timezone)
+            self._send_message(message)
             self.state.record_announcement(obs)
             posted += 1
         self.state.save()
@@ -60,9 +58,10 @@ class Monitor:
             end_before=end_before,
             max_results=self.config.max_observations,
         )
-        for obs in observations:
-            embed = build_upcoming_embed(obs, api_base_url=self.config.api_base_url, tz_name=self.config.timezone)
-            self._send_embed(embed)
+        for index, obs in enumerate(observations, start=1):
+            if index > 1:
+                print("-" * 72)
+            print(format_upcoming_message(obs, api_base_url=self.config.api_base_url, tz_name=self.config.timezone))
         return len(observations)
 
     def check_completed(self) -> int:
@@ -74,8 +73,8 @@ class Monitor:
             if str(obs.get("status") or "").lower() == "future":
                 # SatNOGS has not finalized this observation yet; try again on the next run.
                 continue
-            embed = build_completion_embed(obs, api_base_url=self.config.api_base_url, tz_name=self.config.timezone)
-            self._send_embed(embed)
+            message = format_completion_message(obs, api_base_url=self.config.api_base_url, tz_name=self.config.timezone)
+            self._send_message(message)
             self.state.record_completion(obs)
             posted += 1
         self.state.prune()
@@ -83,20 +82,18 @@ class Monitor:
         return posted
 
     def post_test(self) -> None:
-        embed = {
-            "title": "SatNOGS Discord monitor test",
-            "description": "Webhook delivery is configured correctly.",
-            "color": 0x2B90D9,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        self._send_embed(embed)
+        stamp = datetime.now(timezone.utc).astimezone().strftime("%a %Y-%m-%d %H:%M %Z")
+        self._send_message(f"SatNOGS Discord monitor test — {stamp}")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Post SatNOGS ground-station pass notifications to Discord.")
+    parser = argparse.ArgumentParser(description="Post SatNOGS ground-station pass notifications through OpenClaw Discord.")
     parser.add_argument("command", choices=["once", "announce-upcoming", "check-completed", "list-upcoming", "show-state", "post-test"])
     parser.add_argument("--station-id", type=int, help="SatNOGS ground station ID")
-    parser.add_argument("--discord-webhook-url", help="Discord channel webhook URL")
+    parser.add_argument("--discord-target", help="OpenClaw Discord target, e.g. channel:1494094633142194176")
+    parser.add_argument("--discord-channel-id", help="Discord channel ID; converted to channel:<id>")
+    parser.add_argument("--discord-channel", help="OpenClaw channel connector name; defaults to discord")
+    parser.add_argument("--openclaw-command", help="OpenClaw executable or command prefix; defaults to openclaw")
     parser.add_argument("--api-base-url", help="SatNOGS Network base URL")
     parser.add_argument("--api-token", help="Optional SatNOGS Network API token")
     parser.add_argument("--state-file", help="Path to local JSON state file")
@@ -104,9 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--completion-grace-minutes", type=int, help="Minutes after observation end before checking completion")
     parser.add_argument("--timezone", help="Display timezone, e.g. UTC or America/Los_Angeles")
     parser.add_argument("--max-observations", type=int, help="Maximum observations to fetch per run")
-    parser.add_argument("--discord-username", help="Optional webhook display username")
-    parser.add_argument("--discord-avatar-url", help="Optional webhook avatar URL")
-    parser.add_argument("--dry-run", action="store_true", help="Print webhook payloads instead of posting to Discord")
+    parser.add_argument("--dry-run", action="store_true", help="Print OpenClaw send commands instead of posting to Discord")
     return parser
 
 
@@ -115,12 +110,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "show-state":
-            config = load_config(args, require_webhook=False, require_station=False)
+            config = load_config(args, require_discord=False, require_station=False)
             state = State.load(config.state_file)
             print(json.dumps(state.summary(), indent=2, sort_keys=True))
             return 0
 
-        config = load_config(args, require_webhook=args.command != "list-upcoming", require_station=True)
+        require_discord = args.command not in {"list-upcoming"}
+        config = load_config(args, require_discord=require_discord, require_station=True)
         monitor = Monitor(config)
         if args.command == "once":
             announced = monitor.announce_upcoming()
@@ -141,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             parser.error(f"unknown command {args.command}")
         return 0
-    except (ConfigError, SatnogsApiError, DiscordWebhookError) as exc:
+    except (ConfigError, SatnogsApiError, OpenClawDiscordError) as exc:
         print_error(f"error: {exc}")
         return 2
 
