@@ -9,6 +9,7 @@ from .satnogs import observation_page_url
 from .timeutils import display_datetime, duration_text, parse_datetime
 
 DISCORD_FIELD_LIMIT = 1024
+DISCORD_MESSAGE_LIMIT = 1900
 
 
 def truncate(value: object, limit: int = DISCORD_FIELD_LIMIT) -> str:
@@ -16,6 +17,18 @@ def truncate(value: object, limit: int = DISCORD_FIELD_LIMIT) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
+
+
+def safe_text(value: object, limit: int = DISCORD_FIELD_LIMIT) -> str:
+    """Return Discord-safe text that avoids accidental mass mentions."""
+
+    return truncate(value, limit).replace("@", "@\u200b")
+
+
+def trim_message(message: str, limit: int = DISCORD_MESSAGE_LIMIT) -> str:
+    if len(message) <= limit:
+        return message
+    return message[: limit - 1] + "…"
 
 
 def frequency_mhz(value: object) -> str:
@@ -52,17 +65,17 @@ def satellite_label(obs: dict[str, Any]) -> str:
     sat_id = obs.get("sat_id")
     norad = obs.get("norad_cat_id")
     if sat_id and norad:
-        return f"{sat_id} / NORAD {norad}"
+        return f"{safe_text(sat_id)} / NORAD {safe_text(norad)}"
     if sat_id:
-        return str(sat_id)
+        return safe_text(sat_id)
     if norad:
-        return f"NORAD {norad}"
+        return f"NORAD {safe_text(norad)}"
     return "unknown satellite"
 
 
 def observation_title(obs: dict[str, Any], *, prefix: str) -> str:
     obs_id = obs.get("id", "unknown")
-    return f"{prefix}: {satellite_label(obs)} (Observation #{obs_id})"
+    return f"{prefix}: {satellite_label(obs)} (Observation #{safe_text(obs_id)})"
 
 
 def common_fields(obs: dict[str, Any], tz_name: str) -> list[dict[str, Any]]:
@@ -80,6 +93,69 @@ def common_fields(obs: dict[str, Any], tz_name: str) -> list[dict[str, Any]]:
     ]
 
 
+def _line(label: str, value: object) -> str:
+    return f"**{label}:** {safe_text(value, 500)}"
+
+
+def format_upcoming_message(obs: dict[str, Any], *, api_base_url: str, tz_name: str) -> str:
+    start = parse_datetime(obs.get("start"))
+    end = parse_datetime(obs.get("end"))
+    obs_id = obs.get("id", "unknown")
+    tx_desc = obs.get("transmitter_description") or obs.get("transmitter_uuid") or obs.get("transmitter")
+    message = "\n".join(
+        [
+            f"🛰️ **Upcoming SatNOGS pass** — {satellite_label(obs)} (Observation #{safe_text(obs_id)})",
+            _line("Station", obs.get("station_name") or obs.get("ground_station")),
+            _line("Start", display_datetime(start, tz_name)),
+            _line("End", display_datetime(end, tz_name)),
+            _line("Duration", duration_text(start, end)),
+            _line("Mode", obs.get("transmitter_mode")),
+            _line("Downlink", frequency_mhz(obs.get("transmitter_downlink_low") or obs.get("observation_frequency") or obs.get("center_frequency"))),
+            _line("Max altitude", degrees(obs.get("max_altitude"))),
+            _line("Rise / set azimuth", f"{degrees(obs.get('rise_azimuth'))} / {degrees(obs.get('set_azimuth'))}"),
+            _line("Transmitter", tx_desc),
+            observation_page_url(api_base_url, obs_id),
+        ]
+    )
+    return trim_message(message)
+
+
+def demoddata_count(obs: dict[str, Any]) -> str:
+    frames = obs.get("demoddata")
+    if isinstance(frames, list):
+        return str(len(frames))
+    return "0"
+
+
+def format_completion_message(obs: dict[str, Any], *, api_base_url: str, tz_name: str) -> str:
+    start = parse_datetime(obs.get("start"))
+    end = parse_datetime(obs.get("end"))
+    obs_id = obs.get("id", "unknown")
+    status = obs.get("status") or "unknown"
+    links = [observation_page_url(api_base_url, obs_id)]
+    if obs.get("waterfall"):
+        links.append(str(obs["waterfall"]))
+    if obs.get("archive_url"):
+        links.append(str(obs["archive_url"]))
+    if obs.get("payload"):
+        links.append(str(obs["payload"]))
+    message = "\n".join(
+        [
+            f"{status_emoji(status)} **SatNOGS pass complete** — {satellite_label(obs)} (Observation #{safe_text(obs_id)})",
+            _line("Station", obs.get("station_name") or obs.get("ground_station")),
+            _line("Start", display_datetime(start, tz_name)),
+            _line("End", display_datetime(end, tz_name)),
+            _line("Duration", duration_text(start, end)),
+            _line("Final status", status),
+            _line("Vetted status", obs.get("vetted_status")),
+            _line("Waterfall status", obs.get("waterfall_status")),
+            _line("Demodulated frames", demoddata_count(obs)),
+            "**Links:** " + " | ".join(links),
+        ]
+    )
+    return trim_message(message)
+
+
 def build_upcoming_embed(obs: dict[str, Any], *, api_base_url: str, tz_name: str) -> dict[str, Any]:
     obs_id = obs.get("id", "unknown")
     fields = common_fields(obs, tz_name)
@@ -94,13 +170,6 @@ def build_upcoming_embed(obs: dict[str, Any], *, api_base_url: str, tz_name: str
         "footer": {"text": "SatNOGS Network pass monitor"},
         "timestamp": (parse_datetime(obs.get("start")) or datetime.utcnow()).isoformat(),
     }
-
-
-def demoddata_count(obs: dict[str, Any]) -> str:
-    frames = obs.get("demoddata")
-    if isinstance(frames, list):
-        return str(len(frames))
-    return "0"
 
 
 def build_completion_embed(obs: dict[str, Any], *, api_base_url: str, tz_name: str) -> dict[str, Any]:
@@ -135,6 +204,12 @@ def build_completion_embed(obs: dict[str, Any], *, api_base_url: str, tz_name: s
 
 
 def webhook_payload(*, embed: dict[str, Any], username: str | None = None, avatar_url: str | None = None, content: str | None = None) -> dict[str, Any]:
+    """Build the legacy Discord webhook payload.
+
+    The current skill posts through OpenClaw's Discord connector. This helper is
+    retained only for compatibility with the initial webhook implementation.
+    """
+
     payload: dict[str, Any] = {"embeds": [embed]}
     if content:
         payload["content"] = content
