@@ -1,0 +1,10 @@
+[Unit]
+Description=SatNOGS Discord pass monitor
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/SATNOGS-open-claw-skill
+EnvironmentFile=/opt/SATNOGS-open-claw-skill/.env
+ExecStart=/usr/bin/python3 -m satnogs_discord_skill once

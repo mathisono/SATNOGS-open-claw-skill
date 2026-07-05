@@ -1,0 +1,15 @@
+[project]
+name = "satnogs-open-claw-skill"
+version = "0.1.0"
+description = "OpenClaw skill for posting SatNOGS ground-station pass notifications to Discord."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "CC0-1.0" }
+authors = [{ name = "OpenClaw skill contributors" }]
+dependencies = []
+
+[project.scripts]
+satnogs-discord = "satnogs_discord_skill.cli:main"
+
+[tool.setuptools]
+packages = ["satnogs_discord_skill"]
