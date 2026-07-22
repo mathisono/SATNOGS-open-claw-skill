@@ -37,10 +37,10 @@ class OpenClawDiscord:
         self.dry_run = dry_run
         self.timeout = timeout
 
-    def _command_args(self, message: str) -> list[str]:
+    def _command_args(self, message: str, media: str | None = None, presentation: dict | None = None) -> list[str]:
         if not self.target:
             raise OpenClawDiscordError("No OpenClaw Discord target configured")
-        return shlex.split(self.command) + [
+        args = shlex.split(self.command) + [
             "message",
             "send",
             "--channel",
@@ -50,9 +50,14 @@ class OpenClawDiscord:
             "--message",
             message,
         ]
+        if media:
+            args.extend(["--media", media])
+        if presentation:
+            args.extend(["--presentation", json.dumps(presentation, separators=(",", ":"))])
+        return args
 
-    def send_message(self, message: str) -> None:
-        args = self._command_args(message)
+    def send_message(self, message: str, media: str | None = None, presentation: dict | None = None) -> None:
+        args = self._command_args(message, media, presentation)
         if self.dry_run:
             print(
                 json.dumps(
@@ -60,6 +65,8 @@ class OpenClawDiscord:
                         "dry_run": True,
                         "command": shlex.join(args),
                         "message": message,
+                        "media": media,
+                        "presentation": presentation,
                     },
                     indent=2,
                     sort_keys=True,

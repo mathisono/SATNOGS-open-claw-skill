@@ -3,6 +3,8 @@ import unittest
 from satnogs_discord_skill.messages import (
     build_completion_embed,
     build_upcoming_embed,
+    completion_pass_button,
+    completion_waterfall_media,
     duration_text,
     format_completion_message,
     format_upcoming_message,
@@ -65,12 +67,33 @@ class MessageTests(unittest.TestCase):
         self.assertLessEqual(len(message), 1900)
 
     def test_completion_openclaw_message(self):
-        obs = dict(OBS, status="good", waterfall="https://example.test/waterfall.png", demoddata=[{"payload_demod": "x"}])
+        obs = dict(
+            OBS,
+            status="good",
+            waterfall="https://example.test/waterfall.png",
+            archive_url="https://example.test/audio.ogg",
+            payload="https://example.test/payload.txt",
+            demoddata=[{"payload_demod": "x"}],
+        )
         message = format_completion_message(obs, api_base_url="https://network.satnogs.org", tz_name="UTC")
         self.assertIn("SatNOGS pass complete", message)
         self.assertIn("Final status", message)
         self.assertIn("good", message)
-        self.assertIn("https://example.test/waterfall.png", message)
+        self.assertIn("https://network.satnogs.org/observations/42/", message)
+        self.assertNotIn("https://example.test/waterfall.png", message)
+        self.assertNotIn("https://example.test/audio.ogg", message)
+        self.assertNotIn("https://example.test/payload.txt", message)
+
+    def test_completion_waterfall_media(self):
+        obs = dict(OBS, waterfall="https://example.test/waterfall.png")
+        self.assertEqual(completion_waterfall_media(obs), "https://example.test/waterfall.png")
+        self.assertIsNone(completion_waterfall_media(OBS))
+
+    def test_completion_pass_button(self):
+        presentation = completion_pass_button(OBS, api_base_url="https://network.satnogs.org")
+        button = presentation["blocks"][0]["buttons"][0]
+        self.assertEqual(button["label"], "Open pass")
+        self.assertEqual(button["url"], "https://network.satnogs.org/observations/42/")
 
 
 if __name__ == "__main__":

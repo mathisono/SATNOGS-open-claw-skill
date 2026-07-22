@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from .config import Config, ConfigError, load_config
 from .discord import OpenClawDiscord, OpenClawDiscordError, print_error
-from .messages import format_completion_message, format_upcoming_message
+from .messages import completion_pass_button, completion_waterfall_media, format_completion_message, format_upcoming_message
 from .satnogs import SatnogsApiError, SatnogsClient
 from .state import State
 
@@ -25,8 +25,8 @@ class Monitor:
         )
         self.state = State.load(config.state_file)
 
-    def _send_message(self, message: str) -> None:
-        self.discord.send_message(message)
+    def _send_message(self, message: str, media: str | None = None, presentation: dict | None = None) -> None:
+        self.discord.send_message(message, media=media, presentation=presentation)
 
     def announce_upcoming(self) -> int:
         now = datetime.now(timezone.utc)
@@ -74,7 +74,11 @@ class Monitor:
                 # SatNOGS has not finalized this observation yet; try again on the next run.
                 continue
             message = format_completion_message(obs, api_base_url=self.config.api_base_url, tz_name=self.config.timezone)
-            self._send_message(message)
+            self._send_message(
+                message,
+                media=completion_waterfall_media(obs),
+                presentation=completion_pass_button(obs, api_base_url=self.config.api_base_url),
+            )
             self.state.record_completion(obs)
             posted += 1
         self.state.prune()

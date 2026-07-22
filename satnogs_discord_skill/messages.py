@@ -132,13 +132,7 @@ def format_completion_message(obs: dict[str, Any], *, api_base_url: str, tz_name
     end = parse_datetime(obs.get("end"))
     obs_id = obs.get("id", "unknown")
     status = obs.get("status") or "unknown"
-    links = [observation_page_url(api_base_url, obs_id)]
-    if obs.get("waterfall"):
-        links.append(str(obs["waterfall"]))
-    if obs.get("archive_url"):
-        links.append(str(obs["archive_url"]))
-    if obs.get("payload"):
-        links.append(str(obs["payload"]))
+    pass_url = observation_page_url(api_base_url, obs_id)
     message = "\n".join(
         [
             f"{status_emoji(status)} **SatNOGS pass complete** — {satellite_label(obs)} (Observation #{safe_text(obs_id)})",
@@ -150,10 +144,34 @@ def format_completion_message(obs: dict[str, Any], *, api_base_url: str, tz_name
             _line("Vetted status", obs.get("vetted_status")),
             _line("Waterfall status", obs.get("waterfall_status")),
             _line("Demodulated frames", demoddata_count(obs)),
-            "**Links:** " + " | ".join(links),
+            f"**Pass page:** {pass_url}",
         ]
     )
     return trim_message(message)
+
+
+def completion_waterfall_media(obs: dict[str, Any]) -> str | None:
+    waterfall = obs.get("waterfall")
+    if not waterfall:
+        return None
+    return str(waterfall)
+
+
+def completion_pass_button(obs: dict[str, Any], *, api_base_url: str) -> dict[str, Any]:
+    obs_id = obs.get("id", "unknown")
+    return {
+        "blocks": [
+            {
+                "type": "buttons",
+                "buttons": [
+                    {
+                        "label": "Open pass",
+                        "url": observation_page_url(api_base_url, obs_id),
+                    }
+                ],
+            }
+        ]
+    }
 
 
 def build_upcoming_embed(obs: dict[str, Any], *, api_base_url: str, tz_name: str) -> dict[str, Any]:
